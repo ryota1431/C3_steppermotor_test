@@ -1,38 +1,81 @@
 #include <Arduino.h>
-#include "StepperMotor.h"
+#include <AccelStepper.h>
+#include <WiiChuck.h>
+#include <ESP32Servo.h>
+// サーボモーターのパラメータ
+int pwmPin = D2;
+Servo servo;
+int minUs = 1000;
+int maxUs = 2000;
 
-#define DIR_PIN D0
 #define STEP_PIN D1
+#define DIR_PIN D0
 
-StepperMotor motor(DIR_PIN, STEP_PIN);
+// ステッパーモーターの設定
+AccelStepper stepper(AccelStepper::DRIVER, STEP_PIN, DIR_PIN);
+Accessory Classic;
 
-int joystickValue = 0;
-int count = 0;
-int dir = 1;
+// ステッパーモーターのパラメータ
+const int microStep = 1;
+const int maxStep = 800 * microStep;
+const int maxSpeed = 800 * microStep;
+const int acceleration = 400 * microStep;
 
-void setup() {
-    Serial.begin(9600);
+// ジョイスティックのパラメータ
+const int deadZone = 4;          // デッドゾーンを小さくする
+const int maxJoystickValue = 64; // ジョイスティックの最大値
+const int minJoystickValue = 0;  // ジョイスティックの最小値
+const int cyclePeriod = 1000;    // サイクルの周期
+void setup()
+{
+  // Allow allocation of all timers
+  ESP32PWM::allocateTimer(0);
+  ESP32PWM::allocateTimer(1);
+  ESP32PWM::allocateTimer(2);
+  ESP32PWM::allocateTimer(3);
+  servo.attach(pwmPin, minUs, maxUs);
+  Serial.begin(9600);
+  Classic.begin();
+  // ステッパーモーターの初期設定
+  stepper.setMaxSpeed(maxSpeed);
+  stepper.setAcceleration(acceleration);
 }
 
-void loop() {
-    if(count < 511 && count > -511){
-    if(dir == 1){
-      count++;
-      joystickValue = count;  // 0-1023の値を-512から511の範囲に変換
-    }else{
-      count--;
-      joystickValue = count;  // 0-1023の値を-512から511の範囲に変換
-    }
-    }else if(count >= 511){
-      dir = 0;
-    }else if(count <= -511){
-      dir = 1;
-    }
-    motor.setSpeedFromJoystick(joystickValue);
-    motor.update();
+void setSpeedFromJoystick(int joystickValue)
+{
+  float step;
+  if (abs(joystickValue - 32) < deadZone)
+  {
+    step = 0;
+  }
+  else
+  {
+    step = map(joystickValue, minJoystickValue, maxJoystickValue, -maxStep, maxStep);
+  }
+  stepper.setSpeed(step);
+  stepper.move(step);
+}
 
-    // デバッグ出力（必要に応じて）
-    Serial.print("Joystick: ");
-    Serial.println(joystickValue);
-    delay(100);  // 短い遅延を入れてCPU負荷を軽減
+void loop()
+{
+  Classic.readData();
+  int joystickValue = Classic.getJoyYLeft();
+  setSpeedFromJoystick(joystickValue);
+  int servoValue = map(Classic.getJoyXLeft(), 0, 64, 0, 180);
+  servo.write(servoValue);
+
+  // デバッグ出力
+  Serial.print("JoyYLeft: ");
+  Serial.print(joystickValue);
+  Serial.print(", Add Step: ");
+  Serial.print(map(joystickValue, minJoystickValue, maxJoystickValue, -maxSpeed, maxSpeed));
+  Serial.print(", Servo: ");
+  Serial.print(servoValue);
+  Serial.print(", Angle:");
+  Serial.println(servo.read());
+  Serial.print(", Actual Speed(before run): ");
+  Serial.print(stepper.speed());
+  stepper.runSpeed();
+  Serial.print(", Actual Speed(after run): ");
+  Serial.println(stepper.speed());
 }
